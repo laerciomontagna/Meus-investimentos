@@ -16,7 +16,7 @@ import { getDatabase, ref, set, get }
 //  Cole aqui os valores do seu projeto Firebase
 // ══════════════════════════════════════════════════════════════════
 const firebaseConfig = {
-  apiKey:            "AIzaSyDPHbPLkNxIVEhaN235DXx0fbpEA0uDY80",
+   apiKey:            "AIzaSyDPHbPLkNxIVEhaN235DXx0fbpEA0uDY80",
   authDomain:        "investimentos-laercio.firebaseapp.com",
   databaseURL:       "https://investimentos-laercio-default-rtdb.firebaseio.com",
   projectId:         "investimentos-laercio",
@@ -588,10 +588,7 @@ window._initDashboard = function() {
     new Date().toLocaleDateString('pt-BR',{day:'2-digit',month:'short',year:'numeric'});
   const savedToken = localStorage.getItem('brapi_token');
   if (savedToken) document.getElementById('brapi-token').value = savedToken;
-}; catch(e){ ops=[]; }
-  try { divs   = JSON.parse(localStorage.getItem('inv_divs')  ||'[]');  } catch(e){ divs=[]; }
-  try { precos = JSON.parse(localStorage.getItem('inv_precos')||'{}'); } catch(e){ precos={}; }
-}
+};
 
 function getPosicoes() {
   const pos = {};
@@ -1216,6 +1213,20 @@ function refreshAll() {
 }
 
 // Init — data loaded via Firebase onAuthStateChanged → _initDashboard → _syncFromFirebase
+
+// Expõe funções usadas nos onclick do HTML
+window.goPage         = goPage;
+window.addOp          = addOp;
+window.delOp          = delOp;
+window.addDiv         = addDiv;
+window.delDiv         = delDiv;
+window.setPeriodo     = setPeriodo;
+window.buildRentabilidade = buildRentabilidade;
+window.fetchAllCotacoes   = fetchAllCotacoes;
+window.savePrecos     = savePrecos;
+window.exportarDados  = exportarDados;
+window.importarDados  = importarDados;
+window.importarDividendos = importarDividendos;
 </script>
 
 </div><!-- /app-screen -->
