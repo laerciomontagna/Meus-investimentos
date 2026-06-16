@@ -1,0 +1,1231 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard de Investimentos</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script type="module">
+// ══════════════════════════════════════════════════════════════════
+//  FIREBASE CONFIG — substitua pelos valores do seu projeto Firebase
+//  1. Acesse console.firebase.google.com
+//  2. Crie um projeto → Adicionar app (Web)
+//  3. Copie os valores abaixo
+//  ATENÇÃO: use Realtime Database (gratuito, sem cartão de crédito)
+// ══════════════════════════════════════════════════════════════════
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getDatabase, ref, set, get }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey:            "AIzaSyDPHbPLkNxIVEhaN235DXx0fbpEA0uDY80",
+  authDomain:        "investimentos-laercio.firebaseapp.com",
+  databaseURL:       "https://investimentos-laercio-default-rtdb.firebaseio.com",
+  projectId:         "investimentos-laercio",
+  storageBucket:     "investimentos-laercio.firebasestorage.app",
+  messagingSenderId: "9914702652",
+  appId:             "1:99147026526:web:10f52340f112ae59ece4cf"
+};
+
+const app  = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getDatabase(app);
+
+// ── Auth UI ──────────────────────────────────────────────────────
+window._fbLogin = async () => {
+  const email = document.getElementById('fb-email').value.trim();
+  const pass  = document.getElementById('fb-pass').value;
+  const msg   = document.getElementById('fb-msg');
+  msg.textContent = '';
+  try {
+    await signInWithEmailAndPassword(auth, email, pass);
+  } catch(e) {
+    msg.textContent = traduzirErroFirebase(e.code);
+  }
+};
+
+window._fbRegister = async () => {
+  const email = document.getElementById('fb-email').value.trim();
+  const pass  = document.getElementById('fb-pass').value;
+  const msg   = document.getElementById('fb-msg');
+  msg.textContent = '';
+  if (pass.length < 6) { msg.textContent = 'A senha deve ter ao menos 6 caracteres.'; return; }
+  try {
+    await createUserWithEmailAndPassword(auth, email, pass);
+  } catch(e) {
+    msg.textContent = traduzirErroFirebase(e.code);
+  }
+};
+
+window._fbLogout = async () => {
+  await signOut(auth);
+};
+
+function traduzirErroFirebase(code) {
+  const map = {
+    'auth/invalid-email':        'E-mail inválido.',
+    'auth/user-not-found':       'Usuário não encontrado.',
+    'auth/wrong-password':       'Senha incorreta.',
+    'auth/email-already-in-use': 'Este e-mail já está cadastrado.',
+    'auth/weak-password':        'Senha muito fraca (mín. 6 caracteres).',
+    'auth/too-many-requests':    'Muitas tentativas. Tente novamente mais tarde.',
+    'auth/invalid-credential':   'E-mail ou senha incorretos.',
+  };
+  return map[code] || 'Erro: ' + code;
+}
+
+// ── Realtime Database save/load ──────────────────────────────────
+let _uid = null;
+
+async function fbSave() {
+  if (!_uid) return;
+  try {
+    await set(ref(db, 'usuarios/' + _uid), {
+      ops:     window._ops    || [],
+      divs:    window._divs   || [],
+      precos:  window._precos || {},
+      salvoEm: new Date().toISOString()
+    });
+  } catch(e) { console.error('Erro ao salvar:', e); }
+}
+
+async function fbLoad() {
+  if (!_uid) return;
+  try {
+    const snap = await get(ref(db, 'usuarios/' + _uid));
+    if (snap.exists()) {
+      const d = snap.val();
+      window._ops    = d.ops    || [];
+      window._divs   = d.divs   || [];
+      window._precos = d.precos || {};
+    } else {
+      window._ops = []; window._divs = []; window._precos = {};
+    }
+    window._syncFromFirebase();
+  } catch(e) { console.error('Erro ao carregar:', e); }
+}
+
+// ── Auth state listener ──────────────────────────────────────────
+onAuthStateChanged(auth, async user => {
+  if (user) {
+    _uid = user.uid;
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app-screen').style.display  = 'grid';
+    document.getElementById('sb-user-email').textContent  = user.email;
+    await fbLoad();
+    window._initDashboard();
+  } else {
+    _uid = null;
+    document.getElementById('login-screen').style.display = 'flex';
+    document.getElementById('app-screen').style.display  = 'none';
+  }
+});
+
+// expose to dashboard JS
+window._fbSave = fbSave;
+window._fbLoad = fbLoad;
+</script>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --surface: #ffffff;
+    --border: #e5e5e2;
+    --border-light: #efefec;
+    --text: #1a1a18;
+    --text-muted: #6b6b68;
+    --text-hint: #a0a09c;
+    --blue: #185fa5;
+    --blue-light: #e6f1fb;
+    --blue-mid: #378add;
+    --green: #1d9e75;
+    --green-light: #e1f5ee;
+    --red: #c62828;
+    --red-light: #fce4ec;
+    --amber: #ba7517;
+    --amber-light: #faeeda;
+    --purple: #534ab7;
+    --purple-light: #eeedfe;
+    --radius: 10px;
+    --radius-sm: 6px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.5; }
+
+  .layout { display: grid; grid-template-columns: 200px 1fr; min-height: 100vh; }
+
+  /* Sidebar */
+  .sidebar { background: var(--surface); border-right: 1px solid var(--border); padding: 1.5rem 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+  .sidebar-brand { padding: 0 1.25rem 1.5rem; border-bottom: 1px solid var(--border-light); margin-bottom: 1rem; }
+  .sidebar-brand h1 { font-size: 14px; font-weight: 600; color: var(--text); }
+  .sidebar-brand p { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 8px 1.25rem; font-size: 13px; color: var(--text-muted); cursor: pointer; border-left: 2px solid transparent; transition: all .15s; }
+  .nav-item:hover { background: var(--bg); color: var(--text); }
+  .nav-item.active { color: var(--blue); background: var(--blue-light); border-left-color: var(--blue-mid); font-weight: 500; }
+  .nav-icon { font-size: 16px; width: 18px; text-align: center; }
+  .nav-section { font-size: 10px; font-weight: 600; color: var(--text-hint); letter-spacing: .06em; padding: 1rem 1.25rem .4rem; text-transform: uppercase; }
+
+  /* Main */
+  .main { padding: 2rem; max-width: 1100px; }
+  .page { display: none; }
+  .page.active { display: block; }
+  .page-header { margin-bottom: 1.5rem; }
+  .page-header h2 { font-size: 20px; font-weight: 600; }
+  .page-header p { font-size: 13px; color: var(--text-muted); margin-top: 3px; }
+
+  /* Cards */
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem; }
+  .card + .card { margin-top: 1rem; }
+  .card-title { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 1rem; }
+
+  /* Metrics */
+  .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 1.25rem; }
+  .metric { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; }
+  .metric-label { font-size: 11px; color: var(--text-muted); font-weight: 500; text-transform: uppercase; letter-spacing: .04em; }
+  .metric-value { font-size: 22px; font-weight: 600; margin: 4px 0 2px; }
+  .metric-sub { font-size: 11px; color: var(--text-muted); }
+
+  /* Charts row */
+  .charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem; }
+
+  /* Tables */
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { font-size: 11px; font-weight: 600; color: var(--text-muted); text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { padding: 9px 10px; border-bottom: 1px solid var(--border-light); color: var(--text); white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--bg); }
+
+  /* Badges */
+  .badge { display: inline-block; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 99px; }
+  .badge-acao { background: var(--blue-light); color: var(--blue); }
+  .badge-fii { background: var(--green-light); color: var(--green); }
+  .badge-etf { background: var(--purple-light); color: var(--purple); }
+  .badge-compra { background: var(--amber-light); color: var(--amber); }
+  .badge-venda { background: var(--red-light); color: var(--red); }
+
+  /* Colors */
+  .pos { color: var(--green); }
+  .neg { color: var(--red); }
+
+  /* Forms */
+  .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; align-items: end; }
+  .form-group { display: flex; flex-direction: column; gap: 5px; }
+  .form-group label { font-size: 11px; font-weight: 500; color: var(--text-muted); }
+  .form-group input, .form-group select {
+    height: 36px; padding: 0 10px; font-size: 13px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--surface); color: var(--text); outline: none;
+    transition: border-color .15s;
+  }
+  .form-group input:focus, .form-group select:focus { border-color: var(--blue-mid); box-shadow: 0 0 0 3px rgba(55,138,221,.1); }
+  .btn { height: 36px; padding: 0 16px; font-size: 13px; font-weight: 500; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); cursor: pointer; transition: all .15s; white-space: nowrap; }
+  .btn:hover { background: var(--bg); border-color: #ccc; }
+  .btn-primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .btn-primary:hover { background: #145390; border-color: #145390; }
+  .btn-sm { height: 28px; padding: 0 10px; font-size: 12px; }
+  .btn-danger { color: var(--red); border-color: transparent; background: transparent; }
+  .btn-danger:hover { background: var(--red-light); }
+  .periodo-btn.active { background: var(--blue); border-color: var(--blue); color: #fff; font-weight: 500; }
+
+  /* Error msg */
+  .form-msg { font-size: 12px; color: var(--red); min-height: 18px; margin-top: 6px; }
+
+  /* Empty state */
+  .empty { text-align: center; padding: 2.5rem; color: var(--text-hint); font-size: 13px; }
+  .empty-icon { font-size: 32px; margin-bottom: 8px; opacity: .4; }
+
+  /* Legend */
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 10px; }
+  .legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-muted); }
+  .legend-dot { width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; }
+
+  /* Cotação status */
+  .cotacao-status { display: flex; align-items: center; gap: 8px; padding: .6rem 1rem; background: var(--bg); border-radius: var(--radius-sm); font-size: 12px; color: var(--text-muted); margin-bottom: 1rem; border: 1px solid var(--border-light); }
+  .dot-status { width: 7px; height: 7px; border-radius: 50%; background: var(--text-hint); flex-shrink: 0; }
+  .dot-ok { background: var(--green); }
+  .dot-loading { background: var(--amber); animation: pulse 1s infinite; }
+  .dot-err { background: var(--red); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  /* Price update form */
+  .price-grid { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+  .price-item { display: flex; flex-direction: column; gap: 4px; }
+  .price-item label { font-size: 11px; font-weight: 500; color: var(--text-muted); }
+  .price-item input { width: 100px; height: 32px; padding: 0 8px; font-size: 13px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); outline: none; }
+  .price-item input:focus { border-color: var(--blue-mid); }
+
+  /* Login screen */
+  #login-screen {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; background: var(--bg);
+  }
+  .login-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 2rem; width: 100%; max-width: 360px;
+    box-shadow: 0 4px 24px rgba(0,0,0,.07);
+  }
+  .login-card h2 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+  .login-card p  { font-size: 13px; color: var(--text-muted); margin-bottom: 1.5rem; }
+  .login-field   { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+  .login-field label { font-size: 11px; font-weight: 500; color: var(--text-muted); }
+  .login-field input {
+    height: 38px; padding: 0 12px; font-size: 13px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--bg); color: var(--text); outline: none; transition: border-color .15s;
+  }
+  .login-field input:focus { border-color: var(--blue-mid); background: var(--surface); box-shadow: 0 0 0 3px rgba(55,138,221,.1); }
+  .login-btn-row { display: flex; gap: 8px; margin-top: 4px; }
+  .login-err { font-size: 12px; color: var(--red); min-height: 18px; margin-top: 8px; text-align: center; }
+  #app-screen  { display: none; }
+
+  @media (max-width: 768px) {
+    .layout { grid-template-columns: 1fr; }
+    .sidebar { position: static; height: auto; }
+    .metrics { grid-template-columns: 1fr 1fr; }
+    .charts-row { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- LOGIN SCREEN -->
+<div id="login-screen">
+  <div class="login-card">
+    <h2>📊 Meus Investimentos</h2>
+    <p>Faça login para acessar sua carteira</p>
+    <div class="login-field">
+      <label>E-mail</label>
+      <input type="email" id="fb-email" placeholder="seu@email.com" autocomplete="email">
+    </div>
+    <div class="login-field">
+      <label>Senha</label>
+      <input type="password" id="fb-pass" placeholder="••••••••" autocomplete="current-password"
+        onkeydown="if(event.key==='Enter') window._fbLogin()">
+    </div>
+    <div class="login-btn-row">
+      <button class="btn btn-primary" style="flex:1" onclick="window._fbLogin()">Entrar</button>
+      <button class="btn" style="flex:1" onclick="window._fbRegister()">Criar conta</button>
+    </div>
+    <div class="login-err" id="fb-msg"></div>
+    <p style="font-size:11px;color:var(--text-hint);margin-top:1rem;text-align:center">
+      Seus dados ficam salvos na nuvem (Firebase) e só você tem acesso.
+    </p>
+  </div>
+</div>
+
+<!-- APP SCREEN -->
+<div id="app-screen" class="layout">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <h1>📊 Meus Investimentos</h1>
+      <p id="sb-data">—</p>
+    </div>
+    <div class="nav-section">Painel</div>
+    <div class="nav-item active" onclick="goPage('visao')"><span class="nav-icon">🏠</span> Visão geral</div>
+    <div class="nav-item" onclick="goPage('posicoes')"><span class="nav-icon">📋</span> Posições</div>
+    <div class="nav-section">Registros</div>
+    <div class="nav-item" onclick="goPage('operacoes')"><span class="nav-icon">↕️</span> Operações</div>
+    <div class="nav-item" onclick="goPage('dividendos')"><span class="nav-icon">💰</span> Dividendos</div>
+    <div class="nav-section">Análise</div>
+    <div class="nav-item" onclick="goPage('rentabilidade')"><span class="nav-icon">📈</span> Rentabilidade</div>
+    <div style="padding: 1rem 1.25rem 0.75rem; border-top: 1px solid var(--border-light); margin-top: auto;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <span id="sb-user-email" style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:130px"></span>
+        <button class="btn btn-sm" onclick="window._fbLogout()" title="Sair" style="padding:0 8px;font-size:11px">Sair</button>
+      </div>
+      <div style="font-size:10px;font-weight:600;color:var(--text-hint);letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px">Dados</div>
+      <div style="display:flex;gap:6px;margin-bottom:12px">
+        <button class="btn btn-sm" onclick="exportarDados()" style="flex:1" title="Salva um arquivo .json com todas as suas operações, dividendos e preços">⬇️ Exportar</button>
+        <button class="btn btn-sm" onclick="document.getElementById('import-input').click()" style="flex:1" title="Carrega um arquivo .json exportado anteriormente">⬆️ Importar</button>
+        <input type="file" id="import-input" accept=".json" style="display:none" onchange="importarDados(this)">
+      </div>
+      <div style="font-size:10px;font-weight:600;color:var(--text-hint);letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px">Token BRAPI</div>
+      <input id="brapi-token" type="password" placeholder="Cole seu token aqui" style="width:100%;height:30px;padding:0 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);outline:none;margin-bottom:6px" oninput="localStorage.setItem('brapi_token',this.value)">
+      <div style="font-size:10px;color:var(--text-hint);margin-bottom:8px">Obtenha grátis em <a href="https://brapi.dev" target="_blank" style="color:var(--blue-mid)">brapi.dev</a></div>
+      <button class="btn btn-sm" onclick="fetchAllCotacoes()" style="width:100%">🔄 Atualizar cotações</button>
+    </div>
+  </aside>
+
+  <!-- Main content -->
+  <main class="main">
+
+    <!-- VISÃO GERAL -->
+    <div id="page-visao" class="page active">
+      <div class="page-header">
+        <h2>Visão geral</h2>
+        <p id="cotacao-time">Cotações não carregadas ainda</p>
+      </div>
+      <div id="cotacao-bar" class="cotacao-status">
+        <span class="dot-status" id="dot"></span>
+        <span id="cotacao-msg">Clique em "Atualizar cotações" para buscar preços atuais via BRAPI</span>
+      </div>
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric-label">Patrimônio total</div>
+          <div class="metric-value" id="m-patrim">R$ —</div>
+          <div class="metric-sub" id="m-patrim-sub">—</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Custo investido</div>
+          <div class="metric-value" id="m-custo">R$ —</div>
+          <div class="metric-sub">valor total aportado</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Resultado</div>
+          <div class="metric-value" id="m-result">—</div>
+          <div class="metric-sub" id="m-result-pct">—</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Dividendos recebidos</div>
+          <div class="metric-value" id="m-divs">R$ —</div>
+          <div class="metric-sub" id="m-divs-mes">—</div>
+        </div>
+      </div>
+      <div class="charts-row">
+        <div class="card">
+          <div class="card-title">Alocação por tipo</div>
+          <div class="legend" id="leg-tipo"></div>
+          <div style="position:relative;height:200px"><canvas id="c-tipo" role="img" aria-label="Alocação por tipo">Alocação por tipo de ativo.</canvas></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Alocação por ativo</div>
+          <div class="legend" id="leg-ativo"></div>
+          <div style="position:relative;height:200px"><canvas id="c-ativo" role="img" aria-label="Alocação por ativo">Alocação por ativo.</canvas></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Dividendos por mês</div>
+        <div style="position:relative;height:180px"><canvas id="c-divmes" role="img" aria-label="Dividendos por mês">Dividendos mensais.</canvas></div>
+      </div>
+    </div>
+
+    <!-- POSIÇÕES -->
+    <div id="page-posicoes" class="page">
+      <div class="page-header">
+        <h2>Posições abertas</h2>
+        <p>Calculado pelo método do preço médio</p>
+      </div>
+      <div class="card" style="margin-bottom:1rem">
+        <div class="card-title">Atualizar preços manualmente</div>
+        <div class="price-grid" id="price-form">
+          <span style="font-size:12px;color:var(--text-hint)">Adicione operações para ver os ativos aqui</span>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary btn-sm" onclick="fetchAllCotacoes()">🔄 Buscar cotações automáticas (BRAPI)</button>
+          <button class="btn btn-sm" onclick="savePrecos()">💾 Salvar preços manuais</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Posições</div>
+        <div class="table-wrap" id="pos-table"><div class="empty"><div class="empty-icon">📋</div>Nenhuma posição ainda. Registre uma compra.</div></div>
+      </div>
+    </div>
+
+    <!-- OPERAÇÕES -->
+    <div id="page-operacoes" class="page">
+      <div class="page-header">
+        <h2>Operações</h2>
+        <p>Registre compras e vendas de ativos</p>
+      </div>
+      <div class="card" style="margin-bottom:1rem">
+        <div class="card-title">Nova operação</div>
+        <div class="form-grid">
+          <div class="form-group"><label>Data</label><input type="date" id="op-data"></div>
+          <div class="form-group"><label>Tipo</label>
+            <select id="op-tipo"><option value="Ação">Ação</option><option value="FII">FII</option><option value="ETF">ETF</option></select>
+          </div>
+          <div class="form-group"><label>Ticker</label><input type="text" id="op-ticker" placeholder="ex: PETR4" style="text-transform:uppercase"></div>
+          <div class="form-group"><label>Operação</label>
+            <select id="op-op"><option value="C">Compra</option><option value="V">Venda</option></select>
+          </div>
+          <div class="form-group"><label>Quantidade</label><input type="number" id="op-qtd" min="1" placeholder="100"></div>
+          <div class="form-group"><label>Preço (R$)</label><input type="number" id="op-preco" step="0.01" placeholder="0,00"></div>
+          <div class="form-group"><label>Corretagem (R$)</label><input type="number" id="op-taxa" step="0.01" placeholder="0,00" value="0"></div>
+          <div class="form-group"><label>&nbsp;</label><button class="btn btn-primary" onclick="addOp()">+ Adicionar</button></div>
+        </div>
+        <div class="form-msg" id="op-msg"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Histórico</div>
+        <div class="table-wrap" id="op-table"><div class="empty"><div class="empty-icon">↕️</div>Nenhuma operação registrada</div></div>
+      </div>
+    </div>
+
+    <!-- DIVIDENDOS -->
+    <div id="page-dividendos" class="page">
+      <div class="page-header">
+        <h2>Dividendos e proventos</h2>
+        <p>Registre dividendos, JCP, rendimentos e amortizações</p>
+      </div>
+      <div style="margin-bottom:1rem;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn btn-primary" onclick="importarDividendos()">⬇️ Importar dividendos via BRAPI</button>
+        <span style="font-size:12px;color:var(--text-muted)" id="import-div-status"></span>
+      </div>
+      <div class="card" style="margin-bottom:1rem">
+        <div class="card-title">Registrar provento manualmente</div>
+        <div class="form-grid">
+          <div class="form-group"><label>Data pagamento</label><input type="date" id="div-data"></div>
+          <div class="form-group"><label>Ticker</label><input type="text" id="div-ticker" placeholder="ex: HGLG11" style="text-transform:uppercase"></div>
+          <div class="form-group"><label>Tipo</label>
+            <select id="div-tipo">
+              <option value="Dividendo">Dividendo</option>
+              <option value="JCP">JCP</option>
+              <option value="Rendimento FII">Rendimento FII</option>
+              <option value="Rendimento ETF">Rendimento ETF</option>
+              <option value="Amortização">Amortização</option>
+            </select>
+          </div>
+          <div class="form-group"><label>Valor por cota (R$)</label><input type="number" id="div-val" step="0.0001" placeholder="0,0000"></div>
+          <div class="form-group"><label>Quantidade na data</label><input type="number" id="div-qtd" min="1" placeholder="100"></div>
+          <div class="form-group"><label>&nbsp;</label><button class="btn btn-primary" onclick="addDiv()">+ Adicionar</button></div>
+        </div>
+        <div class="form-msg" id="div-msg"></div>
+      </div>
+      <div class="metrics" style="margin-bottom:1rem">
+        <div class="metric"><div class="metric-label">Total recebido</div><div class="metric-value" id="d-total">R$ 0,00</div></div>
+        <div class="metric"><div class="metric-label">Mês atual</div><div class="metric-value" id="d-mes">R$ 0,00</div></div>
+        <div class="metric"><div class="metric-label">Yield sobre patrimônio</div><div class="metric-value" id="d-yield">—</div></div>
+        <div class="metric"><div class="metric-label">Recebimentos</div><div class="metric-value" id="d-count">0</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Histórico de proventos</div>
+        <div class="table-wrap" id="div-table"><div class="empty"><div class="empty-icon">💰</div>Nenhum provento registrado</div></div>
+      </div>
+    </div>
+
+    <!-- RENTABILIDADE -->
+    <div id="page-rentabilidade" class="page">
+      <div class="page-header">
+        <h2>Rentabilidade</h2>
+        <p>Desempenho da carteira com filtro de período</p>
+      </div>
+
+      <!-- Período selector -->
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:1.25rem;align-items:center">
+        <span style="font-size:12px;color:var(--text-muted);font-weight:500">Período:</span>
+        <button class="btn btn-sm periodo-btn active" onclick="setPeriodo('tudo')" data-p="tudo">Todo período</button>
+        <button class="btn btn-sm periodo-btn" onclick="setPeriodo('ano')" data-p="ano">Este ano</button>
+        <button class="btn btn-sm periodo-btn" onclick="setPeriodo('12m')" data-p="12m">12 meses</button>
+        <button class="btn btn-sm periodo-btn" onclick="setPeriodo('6m')" data-p="6m">6 meses</button>
+        <button class="btn btn-sm periodo-btn" onclick="setPeriodo('3m')" data-p="3m">3 meses</button>
+        <button class="btn btn-sm periodo-btn" onclick="setPeriodo('30d')" data-p="30d">30 dias</button>
+        <button class="btn btn-sm periodo-btn" onclick="setPeriodo('custom')" data-p="custom">Personalizado</button>
+        <div id="custom-range" style="display:none;gap:6px;align-items:center;flex-wrap:wrap">
+          <input type="date" id="periodo-de" style="height:28px;padding:0 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface)">
+          <span style="font-size:12px;color:var(--text-muted)">até</span>
+          <input type="date" id="periodo-ate" style="height:28px;padding:0 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface)">
+          <button class="btn btn-sm btn-primary" onclick="buildRentabilidade()">Aplicar</button>
+        </div>
+      </div>
+
+      <!-- KPIs do período -->
+      <div class="metrics" style="margin-bottom:.5rem" id="rent-kpis">
+        <div class="metric"><div class="metric-label">Aportes líquidos no período</div><div class="metric-value" id="rk-aportes">—</div><div class="metric-sub" id="rk-aportes-sub">—</div></div>
+        <div class="metric"><div class="metric-label">Dividendos no período</div><div class="metric-value" id="rk-divs">—</div><div class="metric-sub" id="rk-divs-yield">—</div></div>
+        <div class="metric"><div class="metric-label">Resultado da carteira</div><div class="metric-value" id="rk-result">—</div><div class="metric-sub" id="rk-result-pct">—</div></div>
+        <div class="metric"><div class="metric-label">Retorno total (capital + divs)</div><div class="metric-value" id="rk-total">—</div><div class="metric-sub" id="rk-total-pct">—</div></div>
+      </div>
+      <p style="font-size:11px;color:var(--text-hint);margin-bottom:1.25rem">"Resultado da carteira" reflete a posição atual (preço médio vs. cotação atual) e não muda com o período. Aportes e dividendos refletem o período selecionado.</p>
+
+      <!-- Gráfico aportes e dividendos por mês -->
+      <div class="card" style="margin-bottom:1rem">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.75rem">
+          <div class="card-title" style="margin-bottom:0">Aportes líquidos e dividendos por mês</div>
+          <div style="display:flex;gap:12px;font-size:11px;color:var(--text-muted)">
+            <span style="display:flex;align-items:center;gap:4px"><span style="width:9px;height:9px;background:#378add;display:inline-block;border-radius:2px"></span>Aportes líquidos</span>
+            <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:3px;background:#1d9e75;display:inline-block;border-radius:2px"></span>Dividendos</span>
+          </div>
+        </div>
+        <div style="position:relative;height:220px"><canvas id="c-evolucao" role="img" aria-label="Aportes líquidos e dividendos por mês no período">Aportes e dividendos por mês.</canvas></div>
+      </div>
+
+      <!-- Gráfico rentabilidade % por ativo + tabela -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem">
+        <div class="card">
+          <div class="card-title">Rentabilidade % por ativo</div>
+          <div style="position:relative;height:240px"><canvas id="c-rent-pct" role="img" aria-label="Rentabilidade percentual por ativo">Rentabilidade por ativo.</canvas></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Resultado R$ por ativo</div>
+          <div style="position:relative;height:240px"><canvas id="c-rent" role="img" aria-label="Resultado em reais por ativo">Resultado por ativo.</canvas></div>
+        </div>
+      </div>
+
+      <!-- Tabela detalhada -->
+      <div class="card">
+        <div class="card-title">Detalhamento por ativo</div>
+        <div class="table-wrap" id="rent-table"><div class="empty"><div class="empty-icon">📈</div>Nenhuma posição ainda</div></div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+const BRL = v => 'R$ ' + parseFloat(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+const PCT = v => (v>=0?'+':'')+parseFloat(v||0).toFixed(2)+'%';
+const today = () => new Date().toISOString().split('T')[0];
+
+let ops = [], divs = [], precos = {};
+let charts = {};
+
+function save() {
+  // mirror to window for Firebase module to access
+  window._ops    = ops;
+  window._divs   = divs;
+  window._precos = precos;
+  if (window._fbSave) window._fbSave();
+}
+function load() {
+  // called once at init from Firebase; see _syncFromFirebase
+}
+
+// Called by Firebase module after loading data
+window._syncFromFirebase = function() {
+  ops    = window._ops    || [];
+  divs   = window._divs   || [];
+  precos = window._precos || {};
+  refreshAll();
+};
+
+// Called by Firebase module after auth is ready
+window._initDashboard = function() {
+  document.getElementById('op-data').value  = today();
+  document.getElementById('div-data').value = today();
+  document.getElementById('sb-data').textContent =
+    new Date().toLocaleDateString('pt-BR',{day:'2-digit',month:'short',year:'numeric'});
+  const savedToken = localStorage.getItem('brapi_token');
+  if (savedToken) document.getElementById('brapi-token').value = savedToken;
+  // data will arrive via _syncFromFirebase after fbLoad completes
+};
+
+function getPosicoes() {
+  const pos = {};
+  ops.forEach(o => {
+    if (!pos[o.ticker]) pos[o.ticker] = {ticker:o.ticker, tipo:o.tipo, qtd:0, custoTotal:0};
+    const p = pos[o.ticker];
+    if (o.op === 'C') {
+      p.custoTotal += o.qtd * o.preco + (o.taxa||0);
+      p.qtd += o.qtd;
+    } else {
+      const pm = p.qtd > 0 ? p.custoTotal / p.qtd : 0;
+      p.custoTotal -= pm * o.qtd;
+      p.qtd -= o.qtd;
+    }
+  });
+  return Object.values(pos).filter(p => p.qtd > 0);
+}
+
+// BRAPI cotações
+async function fetchAllCotacoes() {
+  const pos = getPosicoes();
+  if (!pos.length) { setCotStatus('err', 'Nenhuma posição para buscar cotações'); return; }
+  const token = (document.getElementById('brapi-token').value || localStorage.getItem('brapi_token') || '').trim();
+  if (!token) {
+    setCotStatus('err', 'Informe seu token BRAPI no campo ao lado esquerdo para buscar cotações.');
+    return;
+  }
+  const tickers = pos.map(p => p.ticker);
+  setCotStatus('loading', `Buscando cotações (0/${tickers.length})...`);
+  let updated = 0, errors = [];
+  for (let i = 0; i < tickers.length; i++) {
+    const ticker = tickers[i];
+    setCotStatus('loading', `Buscando ${ticker} (${i+1}/${tickers.length})...`);
+    try {
+      const url = `https://brapi.dev/api/quote/${ticker}?fundamental=false&token=${token}`;
+      const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+      if (!res.ok) {
+        const errData = await res.json().catch(()=>({}));
+        errors.push(ticker + ': ' + (errData.message || 'HTTP ' + res.status));
+        continue;
+      }
+      const data = await res.json();
+      if (data.results && data.results[0] && data.results[0].regularMarketPrice) {
+        precos[data.results[0].symbol] = data.results[0].regularMarketPrice;
+        updated++;
+      }
+    } catch(e) {
+      errors.push(ticker + ': ' + e.message);
+    }
+    // pequena pausa para não sobrecarregar a API
+    if (i < tickers.length - 1) await new Promise(r => setTimeout(r, 300));
+  }
+  save();
+  refreshAll();
+  const now = new Date().toLocaleTimeString('pt-BR');
+  if (updated > 0) {
+    const errMsg = errors.length ? ` (${errors.length} erro(s): ${errors.join(', ')})` : '';
+    setCotStatus('ok', `${updated} cotação(ões) atualizada(s) às ${now}${errMsg}`);
+    document.getElementById('cotacao-time').textContent = `Atualizado às ${now}`;
+  } else {
+    setCotStatus('err', 'Nenhuma cotação obtida. Erros: ' + errors.join('; '));
+  }
+}
+
+function setCotStatus(type, msg) {
+  const dot = document.getElementById('dot');
+  dot.className = 'dot-status';
+  if (type === 'ok') dot.classList.add('dot-ok');
+  else if (type === 'loading') dot.classList.add('dot-loading');
+  else if (type === 'err') dot.classList.add('dot-err');
+  document.getElementById('cotacao-msg').textContent = msg;
+}
+
+function savePrecos() {
+  const pos = getPosicoes();
+  pos.forEach(p => {
+    const inp = document.getElementById('pi-'+p.ticker);
+    if (inp) precos[p.ticker] = parseFloat(inp.value)||0;
+  });
+  save();
+  refreshAll();
+  setCotStatus('ok', 'Preços manuais salvos');
+}
+
+const COLORS = ['#378add','#1d9e75','#7f77dd','#d85a30','#ba7517','#d4537e','#639922','#5f5e5a','#e24b4a','#1d9e75'];
+
+function destroyChart(id) { if (charts[id]) { charts[id].destroy(); charts[id] = null; } }
+
+function buildCharts() {
+  const pos = getPosicoes();
+
+  // Alocação por tipo
+  const tipoMap = {};
+  pos.forEach(p => { const v = p.qtd*(precos[p.ticker]||0); tipoMap[p.tipo]=(tipoMap[p.tipo]||0)+v; });
+  const tl = Object.keys(tipoMap), tv = tl.map(k=>tipoMap[k]);
+  const tot = tv.reduce((a,b)=>a+b,0)||1;
+  document.getElementById('leg-tipo').innerHTML = tl.map((l,i)=>`<span class="legend-item"><span class="legend-dot" style="background:${COLORS[i]}"></span>${l} ${(tv[i]/tot*100).toFixed(1)}%</span>`).join('');
+  destroyChart('tipo');
+  charts['tipo'] = new Chart(document.getElementById('c-tipo'), {
+    type:'doughnut',
+    data:{labels:tl, datasets:[{data:tv, backgroundColor:COLORS, borderWidth:0}]},
+    options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, cutout:'70%'}
+  });
+
+  // Alocação por ativo
+  const sorted = pos.map(p=>({t:p.ticker,v:p.qtd*(precos[p.ticker]||0)})).sort((a,b)=>b.v-a.v).slice(0,10);
+  const al = sorted.map(x=>x.t), av = sorted.map(x=>x.v);
+  const tot2 = av.reduce((a,b)=>a+b,0)||1;
+  document.getElementById('leg-ativo').innerHTML = al.map((l,i)=>`<span class="legend-item"><span class="legend-dot" style="background:${COLORS[i%COLORS.length]}"></span>${l} ${(av[i]/tot2*100).toFixed(1)}%</span>`).join('');
+  destroyChart('ativo');
+  charts['ativo'] = new Chart(document.getElementById('c-ativo'), {
+    type:'doughnut',
+    data:{labels:al, datasets:[{data:av, backgroundColor:COLORS, borderWidth:0}]},
+    options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, cutout:'70%'}
+  });
+
+  // Dividendos por mês
+  const divMap = {};
+  divs.forEach(d => {
+    const dt = new Date(d.data+'T00:00:00');
+    const key = `${dt.getFullYear()}/${String(dt.getMonth()+1).padStart(2,'0')}`;
+    divMap[key] = (divMap[key]||0) + d.total;
+  });
+  const dkeys = Object.keys(divMap).sort().slice(-12);
+  const dvals = dkeys.map(k=>divMap[k]);
+  destroyChart('divmes');
+  charts['divmes'] = new Chart(document.getElementById('c-divmes'), {
+    type:'bar',
+    data:{labels:dkeys, datasets:[{label:'Dividendos', data:dvals, backgroundColor:'#1d9e75', borderRadius:4}]},
+    options:{responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{y:{ticks:{callback:v=>'R$'+v.toLocaleString('pt-BR')}, grid:{color:'rgba(0,0,0,.05)'}}, x:{grid:{display:false}}}
+    }
+  });
+
+}
+
+function buildMetrics() {
+  const pos = getPosicoes();
+  let patrim=0, custo=0;
+  pos.forEach(p=>{ patrim += p.qtd*(precos[p.ticker]||0); custo += p.custoTotal; });
+  const res = patrim - custo;
+  const pct = custo>0 ? res/custo*100 : 0;
+  const totalDivs = divs.reduce((s,d)=>s+d.total,0);
+  const agora = new Date();
+  const divMes = divs.filter(d=>{ const dt=new Date(d.data+'T00:00:00'); return dt.getMonth()===agora.getMonth()&&dt.getFullYear()===agora.getFullYear(); }).reduce((s,d)=>s+d.total,0);
+
+  document.getElementById('m-patrim').textContent = BRL(patrim);
+  document.getElementById('m-patrim-sub').textContent = pos.length+' ativo(s)';
+  document.getElementById('m-custo').textContent = BRL(custo);
+  document.getElementById('m-result').textContent = BRL(res);
+  document.getElementById('m-result').className = 'metric-value '+(res>=0?'pos':'neg');
+  document.getElementById('m-result-pct').textContent = PCT(pct);
+  document.getElementById('m-divs').textContent = BRL(totalDivs);
+  document.getElementById('m-divs-mes').textContent = 'mês atual: '+BRL(divMes);
+
+  // Dividendos
+  const patrim2 = pos.reduce((s,p)=>s+p.qtd*(precos[p.ticker]||0),0);
+  document.getElementById('d-total').textContent = BRL(totalDivs);
+  document.getElementById('d-mes').textContent = BRL(divMes);
+  document.getElementById('d-yield').textContent = patrim2>0 ? PCT(totalDivs/patrim2*100) : '—';
+  document.getElementById('d-count').textContent = divs.length;
+}
+
+function buildPriceForm() {
+  const pos = getPosicoes();
+  const wrap = document.getElementById('price-form');
+  if (!pos.length) { wrap.innerHTML='<span style="font-size:12px;color:var(--text-hint)">Adicione operações de compra primeiro</span>'; return; }
+  wrap.innerHTML = pos.map(p=>`
+    <div class="price-item">
+      <label>${p.ticker}</label>
+      <input type="number" id="pi-${p.ticker}" step="0.01" value="${precos[p.ticker]||''}" placeholder="0,00">
+    </div>`).join('');
+}
+
+function buildPosTable() {
+  const pos = getPosicoes();
+  const wrap = document.getElementById('pos-table');
+  if (!pos.length) { wrap.innerHTML='<div class="empty"><div class="empty-icon">📋</div>Nenhuma posição aberta</div>'; return; }
+  let html = '<table><thead><tr><th>Ticker</th><th>Tipo</th><th>Qtd</th><th>P. médio</th><th>P. atual</th><th>Custo total</th><th>Valor atual</th></tr></thead><tbody>';
+  const badgeClass = t => t==='FII'?'badge-fii':t==='ETF'?'badge-etf':'badge-acao';
+  pos.forEach(p => {
+    const pm = p.qtd>0?p.custoTotal/p.qtd:0;
+    const pa = precos[p.ticker]||0;
+    html += `<tr><td><b>${p.ticker}</b></td><td><span class="badge ${badgeClass(p.tipo)}">${p.tipo}</span></td><td>${p.qtd}</td><td>${BRL(pm)}</td><td>${pa>0?BRL(pa):'—'}</td><td>${BRL(p.custoTotal)}</td><td>${pa>0?BRL(p.qtd*pa):'—'}</td></tr>`;
+  });
+  wrap.innerHTML = html + '</tbody></table>';
+}
+
+function buildOpTable() {
+  const wrap = document.getElementById('op-table');
+  if (!ops.length) { wrap.innerHTML='<div class="empty"><div class="empty-icon">↕️</div>Nenhuma operação registrada</div>'; return; }
+  let html = '<table><thead><tr><th>Data</th><th>Ticker</th><th>Tipo</th><th>Operação</th><th>Qtd</th><th>Preço</th><th>Corretagem</th><th>Total</th><th></th></tr></thead><tbody>';
+  [...ops].reverse().forEach((o,ri) => {
+    const i = ops.length-1-ri;
+    html += `<tr><td>${o.data}</td><td><b>${o.ticker}</b></td><td><span class="badge ${o.tipo==='FII'?'badge-fii':o.tipo==='ETF'?'badge-etf':'badge-acao'}">${o.tipo}</span></td><td><span class="badge ${o.op==='C'?'badge-compra':'badge-venda'}">${o.op==='C'?'Compra':'Venda'}</span></td><td>${o.qtd}</td><td>${BRL(o.preco)}</td><td>${BRL(o.taxa||0)}</td><td>${BRL(o.qtd*o.preco+(o.taxa||0))}</td><td><button class="btn btn-danger btn-sm" onclick="delOp(${i})">✕</button></td></tr>`;
+  });
+  wrap.innerHTML = html + '</tbody></table>';
+}
+
+function buildDivTable() {
+  const wrap = document.getElementById('div-table');
+  if (!divs.length) { wrap.innerHTML='<div class="empty"><div class="empty-icon">💰</div>Nenhum provento registrado</div>'; return; }
+  let html = '<table><thead><tr><th>Data</th><th>Ticker</th><th>Tipo</th><th>Val/cota</th><th>Quantidade</th><th>Total</th><th></th></tr></thead><tbody>';
+  [...divs].reverse().forEach((d,ri) => {
+    const i = divs.length-1-ri;
+    html += `<tr><td>${d.data}</td><td><b>${d.ticker}</b></td><td>${d.tipo}</td><td>${BRL(d.valCota)}</td><td>${d.qtd}</td><td class="pos"><b>${BRL(d.total)}</b></td><td><button class="btn btn-danger btn-sm" onclick="delDiv(${i})">✕</button></td></tr>`;
+  });
+  wrap.innerHTML = html + '</tbody></table>';
+}
+
+// ── Rentabilidade com período ──────────────────────────────────────────────
+let periodoAtual = 'tudo';
+
+function setPeriodo(p) {
+  periodoAtual = p;
+  document.querySelectorAll('.periodo-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.p === p);
+  });
+  const cr = document.getElementById('custom-range');
+  if (p === 'custom') {
+    cr.style.display = 'flex';
+  } else {
+    cr.style.display = 'none';
+    buildRentabilidade();
+  }
+}
+
+function getPeriodoDates() {
+  const hoje = today();
+  const d = new Date(hoje + 'T00:00:00');
+  if (periodoAtual === 'tudo') return { de: '1900-01-01', ate: hoje };
+  if (periodoAtual === 'ano')  return { de: d.getFullYear() + '-01-01', ate: hoje };
+  if (periodoAtual === '12m') { d.setFullYear(d.getFullYear()-1); return { de: d.toISOString().split('T')[0], ate: hoje }; }
+  if (periodoAtual === '6m')  { d.setMonth(d.getMonth()-6); return { de: d.toISOString().split('T')[0], ate: hoje }; }
+  if (periodoAtual === '3m')  { d.setMonth(d.getMonth()-3); return { de: d.toISOString().split('T')[0], ate: hoje }; }
+  if (periodoAtual === '30d') { d.setDate(d.getDate()-30); return { de: d.toISOString().split('T')[0], ate: hoje }; }
+  if (periodoAtual === 'custom') {
+    return {
+      de:  document.getElementById('periodo-de').value  || '1900-01-01',
+      ate: document.getElementById('periodo-ate').value || hoje
+    };
+  }
+  return { de: '1900-01-01', ate: hoje };
+}
+
+function buildRentabilidade() {
+  const pos = getPosicoes();
+  const { de, ate } = getPeriodoDates();
+
+  // ── KPIs ──
+  // Aportes líquidos no período
+  let aportes = 0;
+  ops.forEach(o => {
+    if (o.data >= de && o.data <= ate) {
+      const val = o.qtd * o.preco + (o.taxa||0);
+      aportes += o.op === 'C' ? val : -val;
+    }
+  });
+
+  // Dividendos no período
+  const divsP = divs.filter(d => d.data >= de && d.data <= ate);
+  const totalDivsP = divsP.reduce((s,d)=>s+d.total, 0);
+
+  // Resultado atual da carteira (preço médio vs cotação)
+  let custoTotal = 0, patrimonioAtual = 0;
+  pos.forEach(p => {
+    custoTotal += p.custoTotal;
+    patrimonioAtual += p.qtd * (precos[p.ticker]||0);
+  });
+  const resultadoCapital = patrimonioAtual - custoTotal;
+  const pctCapital = custoTotal > 0 ? resultadoCapital / custoTotal * 100 : 0;
+  const retornoTotal = resultadoCapital + totalDivsP;
+  const pctTotal = custoTotal > 0 ? retornoTotal / custoTotal * 100 : 0;
+
+  document.getElementById('rk-aportes').textContent = BRL(aportes);
+  document.getElementById('rk-aportes-sub').textContent = ops.filter(o=>o.data>=de&&o.data<=ate).length + ' operação(ões)';
+  document.getElementById('rk-divs').textContent = BRL(totalDivsP);
+  document.getElementById('rk-divs-yield').textContent = divsP.length + ' provento(s)';
+  const rkRes = document.getElementById('rk-result');
+  rkRes.textContent = BRL(resultadoCapital);
+  rkRes.className = 'metric-value ' + (resultadoCapital >= 0 ? 'pos' : 'neg');
+  document.getElementById('rk-result-pct').textContent = custoTotal > 0 ? PCT(pctCapital) : '—';
+  const rkTot = document.getElementById('rk-total');
+  rkTot.textContent = BRL(retornoTotal);
+  rkTot.className = 'metric-value ' + (retornoTotal >= 0 ? 'pos' : 'neg');
+  document.getElementById('rk-total-pct').textContent = custoTotal > 0 ? PCT(pctTotal) : '—';
+
+  // ── Gráfico: aportes líquidos e dividendos por mês no período ──
+  const monthMap = {};
+  ops.filter(o => o.data >= de && o.data <= ate).forEach(o => {
+    const key = o.data.substring(0,7);
+    if (!monthMap[key]) monthMap[key] = { aportes: 0, divs: 0 };
+    const val = o.qtd * o.preco + (o.taxa||0);
+    monthMap[key].aportes += o.op === 'C' ? val : -val;
+  });
+  divsP.forEach(d => {
+    const key = d.data.substring(0,7);
+    if (!monthMap[key]) monthMap[key] = { aportes: 0, divs: 0 };
+    monthMap[key].divs += d.total;
+  });
+  const mKeys = Object.keys(monthMap).sort();
+  destroyChart('evolucao');
+  const canvasEv = document.getElementById('c-evolucao');
+  if (canvasEv) {
+    charts['evolucao'] = new Chart(canvasEv, {
+      type: 'bar',
+      data: {
+        labels: mKeys,
+        datasets: [
+          { label:'Aportes líquidos', data: mKeys.map(k=>monthMap[k].aportes), backgroundColor:'#378add', borderRadius:4, order:2 },
+          { label:'Dividendos',       data: mKeys.map(k=>monthMap[k].divs),    backgroundColor:'#1d9e75', borderRadius:4, order:1 }
+        ]
+      },
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{ display:true, position:'top', labels:{ font:{size:11}, boxWidth:10, padding:12 } } },
+        scales:{
+          y:{ ticks:{ callback:v=>'R$'+v.toLocaleString('pt-BR') }, grid:{ color:'rgba(0,0,0,.05)' } },
+          x:{ grid:{ display:false } }
+        }
+      }
+    });
+  }
+
+  // ── Gráfico rentabilidade % por ativo ──
+  const rentPct = pos.map(p => {
+    const pm = p.qtd > 0 ? p.custoTotal/p.qtd : 0;
+    const pa = precos[p.ticker] || 0;
+    return { ticker: p.ticker, pct: pm > 0 ? (pa-pm)/pm*100 : 0, pa };
+  }).filter(x => x.pa > 0).sort((a,b) => b.pct - a.pct);
+
+  destroyChart('rent-pct');
+  const canvasPct = document.getElementById('c-rent-pct');
+  if (canvasPct) {
+    charts['rent-pct'] = new Chart(canvasPct, {
+      type:'bar',
+      data:{
+        labels: rentPct.map(x=>x.ticker),
+        datasets:[{ label:'Rentab. %', data: rentPct.map(x=>x.pct),
+          backgroundColor: rentPct.map(x=>x.pct>=0?'rgba(29,158,117,.8)':'rgba(226,75,74,.8)'),
+          borderRadius:4 }]
+      },
+      options:{
+        indexAxis:'y', responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{ display:false } },
+        scales:{
+          x:{ ticks:{ callback:v=>v.toFixed(1)+'%' }, grid:{ color:'rgba(0,0,0,.05)' } },
+          y:{ grid:{ display:false }, ticks:{ font:{ size:11 } } }
+        }
+      }
+    });
+  }
+
+  // ── Gráfico resultado R$ por ativo ──
+  const rentReais = pos.map(p => {
+    const pm = p.qtd > 0 ? p.custoTotal/p.qtd : 0;
+    const pa = precos[p.ticker] || 0;
+    return { ticker: p.ticker, result: (pa-pm)*p.qtd, pa };
+  }).filter(x => x.pa > 0).sort((a,b) => b.result - a.result);
+
+  destroyChart('rent');
+  const canvasR = document.getElementById('c-rent');
+  if (canvasR) {
+    charts['rent'] = new Chart(canvasR, {
+      type:'bar',
+      data:{
+        labels: rentReais.map(x=>x.ticker),
+        datasets:[{ label:'Resultado R$', data: rentReais.map(x=>x.result),
+          backgroundColor: rentReais.map(x=>x.result>=0?'rgba(29,158,117,.8)':'rgba(226,75,74,.8)'),
+          borderRadius:4 }]
+      },
+      options:{
+        indexAxis:'y', responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{ display:false } },
+        scales:{
+          x:{ ticks:{ callback:v=>'R$'+v.toLocaleString('pt-BR') }, grid:{ color:'rgba(0,0,0,.05)' } },
+          y:{ grid:{ display:false }, ticks:{ font:{ size:11 } } }
+        }
+      }
+    });
+  }
+
+  // ── Tabela detalhada ──
+  buildRentTable();
+}
+
+function buildRentTable() {
+  const pos = getPosicoes();
+  const { de, ate } = getPeriodoDates();
+  const wrap = document.getElementById('rent-table');
+  if (!pos.length) { wrap.innerHTML='<div class="empty"><div class="empty-icon">📈</div>Nenhuma posição ainda</div>'; return; }
+  const totalPatrim = pos.reduce((s,p)=>s+p.qtd*(precos[p.ticker]||0),0)||1;
+  const badgeClass = t => t==='FII'?'badge-fii':t==='ETF'?'badge-etf':'badge-acao';
+
+  let html = '<table><thead><tr><th>Ticker</th><th>Tipo</th><th>Qtd</th><th>P. médio</th><th>Cotação atual</th><th>Custo total</th><th>Valor atual</th><th>Resultado R$</th><th>Rentab. %</th><th>Divs período</th><th>Retorno total</th><th>Peso</th></tr></thead><tbody>';
+  pos.sort((a,b)=>(b.qtd*(precos[b.ticker]||0))-(a.qtd*(precos[a.ticker]||0))).forEach(p => {
+    const pm  = p.qtd > 0 ? p.custoTotal/p.qtd : 0;
+    const pa  = precos[p.ticker] || 0;
+    const res = (pa - pm) * p.qtd;
+    const pct = pm > 0 ? (pa-pm)/pm*100 : 0;
+    const divsAtivo = divs.filter(d => d.ticker === p.ticker && d.data >= de && d.data <= ate).reduce((s,d)=>s+d.total,0);
+    const retTotal = res + divsAtivo;
+    const pctRetTotal = p.custoTotal > 0 ? retTotal/p.custoTotal*100 : 0;
+    const peso = (p.qtd*pa/totalPatrim*100).toFixed(1);
+    html += `<tr>
+      <td><b>${p.ticker}</b></td>
+      <td><span class="badge ${badgeClass(p.tipo)}">${p.tipo}</span></td>
+      <td>${p.qtd}</td>
+      <td>${BRL(pm)}</td>
+      <td>${pa>0?BRL(pa):'—'}</td>
+      <td>${BRL(p.custoTotal)}</td>
+      <td>${pa>0?BRL(p.qtd*pa):'—'}</td>
+      <td class="${res>=0?'pos':'neg'}">${pa>0?BRL(res):'—'}</td>
+      <td class="${pct>=0?'pos':'neg'}">${pa>0?PCT(pct):'—'}</td>
+      <td class="pos">${divsAtivo>0?BRL(divsAtivo):'—'}</td>
+      <td class="${retTotal>=0?'pos':'neg'}">${pa>0?PCT(pctRetTotal):'—'}</td>
+      <td>${peso}%</td>
+    </tr>`;
+  });
+  wrap.innerHTML = html + '</tbody></table>';
+}
+
+async function importarDividendos() {
+  const pos = getPosicoes();
+  if (!pos.length) { alert('Nenhuma posição encontrada. Registre compras primeiro.'); return; }
+  const token = (document.getElementById('brapi-token').value || localStorage.getItem('brapi_token') || '').trim();
+  if (!token) { alert('Informe seu token BRAPI na barra lateral antes de importar.'); return; }
+
+  const statusEl = document.getElementById('import-div-status');
+  let importados = 0, ignorados = 0, erros = [];
+
+  // Build map of ticker -> earliest buy date
+  const compraMap = {};
+  ops.forEach(o => {
+    if (o.op === 'C') {
+      if (!compraMap[o.ticker] || o.data < compraMap[o.ticker]) {
+        compraMap[o.ticker] = o.data;
+      }
+    }
+  });
+
+  const tickers = pos.map(p => p.ticker);
+
+  for (let i = 0; i < tickers.length; i++) {
+    const ticker = tickers[i];
+    const dataCompra = compraMap[ticker] || '1900-01-01';
+    statusEl.textContent = `Buscando dividendos de ${ticker} (${i+1}/${tickers.length})...`;
+    try {
+      const url = `https://brapi.dev/api/quote/${ticker}?dividends=true&token=${token}`;
+      const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+      if (!res.ok) {
+        const err = await res.json().catch(()=>({}));
+        erros.push(ticker + ': ' + (err.message||'erro'));
+        continue;
+      }
+      const data = await res.json();
+      const dividendsData = data.results?.[0]?.dividendsData?.cashDividends || [];
+
+      dividendsData.forEach(d => {
+        // paymentDate or approvedOn
+        const rawDate = d.paymentDate || d.approvedOn || '';
+        if (!rawDate) return;
+        const dataDiv = rawDate.split('T')[0];
+        if (dataDiv < dataCompra) return; // before purchase, skip
+
+        // Check if already registered (same ticker + date + value)
+        const jaExiste = divs.some(ex =>
+          ex.ticker === ticker &&
+          ex.data === dataDiv &&
+          Math.abs(ex.valCota - (d.rate||0)) < 0.0001
+        );
+        if (jaExiste) { ignorados++; return; }
+
+        // Determine quantity held at that date (simplified: use current qty)
+        const posAtual = getPosicoes().find(p => p.ticker === ticker);
+        const qtd = posAtual ? posAtual.qtd : 0;
+        if (!qtd) return;
+
+        const tipo = d.type === 'JCP' ? 'JCP' :
+                     ticker.endsWith('11') ? 'Rendimento FII' : 'Dividendo';
+
+        divs.push({
+          data: dataDiv,
+          ticker,
+          tipo,
+          valCota: d.rate || 0,
+          qtd,
+          total: (d.rate || 0) * qtd
+        });
+        importados++;
+      });
+    } catch(e) {
+      erros.push(ticker + ': ' + e.message);
+    }
+    if (i < tickers.length - 1) await new Promise(r => setTimeout(r, 350));
+  }
+
+  // Sort divs by date desc
+  divs.sort((a,b) => b.data.localeCompare(a.data));
+  save();
+  refreshAll();
+
+  let msg = `✅ ${importados} provento(s) importado(s)`;
+  if (ignorados) msg += `, ${ignorados} já existente(s) ignorado(s)`;
+  if (erros.length) msg += `. Erros: ${erros.join('; ')}`;
+  statusEl.textContent = msg;
+}
+
+function addOp() {
+  const data = document.getElementById('op-data').value;
+  const tipo = document.getElementById('op-tipo').value;
+  const ticker = document.getElementById('op-ticker').value.trim().toUpperCase();
+  const op = document.getElementById('op-op').value;
+  const qtd = parseInt(document.getElementById('op-qtd').value);
+  const preco = parseFloat(document.getElementById('op-preco').value);
+  const taxa = parseFloat(document.getElementById('op-taxa').value)||0;
+  const msg = document.getElementById('op-msg');
+  if (!data||!ticker||!qtd||!preco) { msg.textContent='Preencha todos os campos obrigatórios.'; return; }
+  if (qtd<=0||preco<=0) { msg.textContent='Quantidade e preço devem ser positivos.'; return; }
+  msg.textContent='';
+  ops.push({data,tipo,ticker,op,qtd,preco,taxa});
+  save();
+  document.getElementById('op-ticker').value='';
+  document.getElementById('op-qtd').value='';
+  document.getElementById('op-preco').value='';
+  document.getElementById('op-taxa').value='0';
+  refreshAll();
+}
+
+function delOp(i) { if (confirm('Remover esta operação?')) { ops.splice(i,1); save(); refreshAll(); } }
+
+function addDiv() {
+  const data = document.getElementById('div-data').value;
+  const ticker = document.getElementById('div-ticker').value.trim().toUpperCase();
+  const tipo = document.getElementById('div-tipo').value;
+  const valCota = parseFloat(document.getElementById('div-val').value);
+  const qtd = parseInt(document.getElementById('div-qtd').value);
+  const msg = document.getElementById('div-msg');
+  if (!data||!ticker||!valCota||!qtd) { msg.textContent='Preencha todos os campos obrigatórios.'; return; }
+  msg.textContent='';
+  divs.push({data,ticker,tipo,valCota,qtd,total:valCota*qtd});
+  save();
+  document.getElementById('div-ticker').value='';
+  document.getElementById('div-val').value='';
+  document.getElementById('div-qtd').value='';
+  refreshAll();
+}
+
+function delDiv(i) { if (confirm('Remover este provento?')) { divs.splice(i,1); save(); refreshAll(); } }
+
+// ── Exportar / Importar dados ─────────────────────────────────────────────
+function exportarDados() {
+  const dados = {
+    versao: 1,
+    exportadoEm: new Date().toISOString(),
+    ops: ops || [],
+    divs: divs || [],
+    precos: precos || {}
+  };
+  const json = JSON.stringify(dados, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const data = new Date().toISOString().split('T')[0];
+  a.href = url;
+  a.download = `meus-investimentos-${data}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importarDados(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const dados = JSON.parse(e.target.result);
+      if (!dados.versao || !Array.isArray(dados.ops)) {
+        alert('Arquivo inválido. Certifique-se de importar um arquivo exportado por este dashboard.');
+        return;
+      }
+      const total = (dados.ops||[]).length + (dados.divs||[]).length;
+      const confirmMsg = `Encontrados ${(dados.ops||[]).length} operação(ões) e ${(dados.divs||[]).length} provento(s).
+
+Isso vai SUBSTITUIR todos os dados atuais. Deseja continuar?`;
+      if (!confirm(confirmMsg)) { input.value=''; return; }
+      ops    = dados.ops    || [];
+      divs   = dados.divs   || [];
+      precos = dados.precos || {};
+      save();
+      refreshAll();
+      // Reload BRAPI token if present
+      const savedToken = localStorage.getItem('brapi_token');
+      if (savedToken) document.getElementById('brapi-token').value = savedToken;
+      alert(`✅ Dados importados com sucesso!
+${ops.length} operação(ões) e ${divs.length} provento(s) carregados.`);
+    } catch(err) {
+      alert('Erro ao ler o arquivo: ' + err.message);
+    }
+    input.value = '';
+  };
+  reader.readAsText(file);
+}
+
+function goPage(page) {
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  document.getElementById('page-'+page).classList.add('active');
+  const idx = ['visao','posicoes','operacoes','dividendos','rentabilidade'].indexOf(page);
+  document.querySelectorAll('.nav-item')[idx].classList.add('active');
+}
+
+function refreshAll() {
+  buildMetrics();
+  buildCharts();
+  buildPriceForm();
+  buildPosTable();
+  buildOpTable();
+  buildDivTable();
+  buildRentabilidade();
+}
+
+// Init runs via window._initDashboard() called from Firebase onAuthStateChanged
+</script>
+</div><!-- /app-screen -->
+</body>
+</html>
