@@ -6,19 +6,15 @@
 <title>Dashboard de Investimentos</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script type="module">
-// ══════════════════════════════════════════════════════════════════
-//  FIREBASE CONFIG — substitua pelos valores do seu projeto Firebase
-//  1. Acesse console.firebase.google.com
-//  2. Crie um projeto → Adicionar app (Web)
-//  3. Copie os valores abaixo
-//  ATENÇÃO: use Realtime Database (gratuito, sem cartão de crédito)
-// ══════════════════════════════════════════════════════════════════
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getDatabase, ref, set, get }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
+// ══════════════════════════════════════════════════════════════════
+//  Cole aqui os valores do seu projeto Firebase
+// ══════════════════════════════════════════════════════════════════
 const firebaseConfig = {
   apiKey:            "AIzaSyDPHbPLkNxIVEhaN235DXx0fbpEA0uDY80",
   authDomain:        "investimentos-laercio.firebaseapp.com",
@@ -33,50 +29,51 @@ const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db   = getDatabase(app);
 
+// ── Tradução de erros ────────────────────────────────────────────
+function traduzirErro(code) {
+  const map = {
+    'auth/invalid-email':        'E-mail inválido.',
+    'auth/user-not-found':       'Usuário não encontrado.',
+    'auth/wrong-password':       'Senha incorreta.',
+    'auth/invalid-credential':   'E-mail ou senha incorretos.',
+    'auth/email-already-in-use': 'Este e-mail já está cadastrado.',
+    'auth/weak-password':        'Senha fraca (mínimo 6 caracteres).',
+    'auth/too-many-requests':    'Muitas tentativas. Tente mais tarde.',
+  };
+  return map[code] || 'Erro: ' + code;
+}
+
 // ── Auth UI ──────────────────────────────────────────────────────
 window._fbLogin = async () => {
   const email = document.getElementById('fb-email').value.trim();
   const pass  = document.getElementById('fb-pass').value;
   const msg   = document.getElementById('fb-msg');
-  msg.textContent = '';
+  msg.style.color = 'var(--red)';
+  msg.textContent = 'Entrando...';
   try {
     await signInWithEmailAndPassword(auth, email, pass);
-  } catch(e) {
-    msg.textContent = traduzirErroFirebase(e.code);
-  }
+  } catch(e) { msg.textContent = traduzirErro(e.code); }
 };
 
 window._fbRegister = async () => {
   const email = document.getElementById('fb-email').value.trim();
   const pass  = document.getElementById('fb-pass').value;
   const msg   = document.getElementById('fb-msg');
+  msg.style.color = 'var(--red)';
   msg.textContent = '';
-  if (pass.length < 6) { msg.textContent = 'A senha deve ter ao menos 6 caracteres.'; return; }
+  if (!email) { msg.textContent = 'Informe um e-mail.'; return; }
+  if (pass.length < 6) { msg.textContent = 'Senha deve ter ao menos 6 caracteres.'; return; }
+  msg.textContent = 'Criando conta...';
   try {
     await createUserWithEmailAndPassword(auth, email, pass);
-  } catch(e) {
-    msg.textContent = traduzirErroFirebase(e.code);
-  }
+  } catch(e) { msg.textContent = traduzirErro(e.code); }
 };
 
 window._fbLogout = async () => {
-  await signOut(auth);
+  if (confirm('Deseja sair da sua conta?')) await signOut(auth);
 };
 
-function traduzirErroFirebase(code) {
-  const map = {
-    'auth/invalid-email':        'E-mail inválido.',
-    'auth/user-not-found':       'Usuário não encontrado.',
-    'auth/wrong-password':       'Senha incorreta.',
-    'auth/email-already-in-use': 'Este e-mail já está cadastrado.',
-    'auth/weak-password':        'Senha muito fraca (mín. 6 caracteres).',
-    'auth/too-many-requests':    'Muitas tentativas. Tente novamente mais tarde.',
-    'auth/invalid-credential':   'E-mail ou senha incorretos.',
-  };
-  return map[code] || 'Erro: ' + code;
-}
-
-// ── Realtime Database save/load ──────────────────────────────────
+// ── Realtime Database ────────────────────────────────────────────
 let _uid = null;
 
 async function fbSave() {
@@ -88,7 +85,7 @@ async function fbSave() {
       precos:  window._precos || {},
       salvoEm: new Date().toISOString()
     });
-  } catch(e) { console.error('Erro ao salvar:', e); }
+  } catch(e) { console.error('Erro ao salvar no Firebase:', e); }
 }
 
 async function fbLoad() {
@@ -97,23 +94,26 @@ async function fbLoad() {
     const snap = await get(ref(db, 'usuarios/' + _uid));
     if (snap.exists()) {
       const d = snap.val();
-      window._ops    = d.ops    || [];
-      window._divs   = d.divs   || [];
+      window._ops    = Array.isArray(d.ops)  ? d.ops  : Object.values(d.ops  || {});
+      window._divs   = Array.isArray(d.divs) ? d.divs : Object.values(d.divs || {});
       window._precos = d.precos || {};
     } else {
       window._ops = []; window._divs = []; window._precos = {};
     }
     window._syncFromFirebase();
-  } catch(e) { console.error('Erro ao carregar:', e); }
+  } catch(e) { console.error('Erro ao carregar do Firebase:', e); }
 }
 
-// ── Auth state listener ──────────────────────────────────────────
+// ── Auth state ───────────────────────────────────────────────────
 onAuthStateChanged(auth, async user => {
   if (user) {
     _uid = user.uid;
     document.getElementById('login-screen').style.display = 'none';
     document.getElementById('app-screen').style.display  = 'grid';
     document.getElementById('sb-user-email').textContent  = user.email;
+    const msg = document.getElementById('fb-msg');
+    msg.style.color = 'var(--green)';
+    msg.textContent = '';
     await fbLoad();
     window._initDashboard();
   } else {
@@ -123,10 +123,9 @@ onAuthStateChanged(auth, async user => {
   }
 });
 
-// expose to dashboard JS
 window._fbSave = fbSave;
-window._fbLoad = fbLoad;
 </script>
+
 <style>
   :root {
     --bg: #f7f7f5;
@@ -256,29 +255,20 @@ window._fbLoad = fbLoad;
   .price-item input { width: 100px; height: 32px; padding: 0 8px; font-size: 13px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); outline: none; }
   .price-item input:focus { border-color: var(--blue-mid); }
 
-  /* Login screen */
-  #login-screen {
-    display: flex; align-items: center; justify-content: center;
-    min-height: 100vh; background: var(--bg);
-  }
-  .login-card {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 2rem; width: 100%; max-width: 360px;
-    box-shadow: 0 4px 24px rgba(0,0,0,.07);
-  }
-  .login-card h2 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
-  .login-card p  { font-size: 13px; color: var(--text-muted); margin-bottom: 1.5rem; }
-  .login-field   { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
-  .login-field label { font-size: 11px; font-weight: 500; color: var(--text-muted); }
-  .login-field input {
-    height: 38px; padding: 0 12px; font-size: 13px;
-    border: 1px solid var(--border); border-radius: var(--radius-sm);
-    background: var(--bg); color: var(--text); outline: none; transition: border-color .15s;
-  }
-  .login-field input:focus { border-color: var(--blue-mid); background: var(--surface); box-shadow: 0 0 0 3px rgba(55,138,221,.1); }
-  .login-btn-row { display: flex; gap: 8px; margin-top: 4px; }
-  .login-err { font-size: 12px; color: var(--red); min-height: 18px; margin-top: 8px; text-align: center; }
-  #app-screen  { display: none; }
+  
+
+  /* Login */
+  #login-screen { display:flex; align-items:center; justify-content:center; min-height:100vh; background:var(--bg); }
+  #app-screen   { display:none; }
+  .login-card   { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:2rem; width:100%; max-width:360px; box-shadow:0 4px 24px rgba(0,0,0,.07); }
+  .login-card h2 { font-size:20px; font-weight:600; margin-bottom:4px; }
+  .login-card .sub { font-size:13px; color:var(--text-muted); margin-bottom:1.5rem; }
+  .login-field { display:flex; flex-direction:column; gap:5px; margin-bottom:12px; }
+  .login-field label { font-size:11px; font-weight:500; color:var(--text-muted); }
+  .login-field input { height:38px; padding:0 12px; font-size:13px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--bg); color:var(--text); outline:none; transition:border-color .15s; }
+  .login-field input:focus { border-color:var(--blue-mid); background:var(--surface); box-shadow:0 0 0 3px rgba(55,138,221,.1); }
+  .login-btn-row { display:flex; gap:8px; margin-top:4px; }
+  .login-msg { font-size:12px; min-height:18px; margin-top:10px; text-align:center; }
 
   @media (max-width: 768px) {
     .layout { grid-template-columns: 1fr; }
@@ -290,14 +280,16 @@ window._fbLoad = fbLoad;
 </head>
 <body>
 
-<!-- LOGIN SCREEN -->
+
+<!-- TELA DE LOGIN -->
 <div id="login-screen">
   <div class="login-card">
     <h2>📊 Meus Investimentos</h2>
-    <p>Faça login para acessar sua carteira</p>
+    <p class="sub">Faça login para acessar sua carteira</p>
     <div class="login-field">
       <label>E-mail</label>
-      <input type="email" id="fb-email" placeholder="seu@email.com" autocomplete="email">
+      <input type="email" id="fb-email" placeholder="seu@email.com" autocomplete="email"
+        onkeydown="if(event.key==='Enter') document.getElementById('fb-pass').focus()">
     </div>
     <div class="login-field">
       <label>Senha</label>
@@ -308,14 +300,14 @@ window._fbLoad = fbLoad;
       <button class="btn btn-primary" style="flex:1" onclick="window._fbLogin()">Entrar</button>
       <button class="btn" style="flex:1" onclick="window._fbRegister()">Criar conta</button>
     </div>
-    <div class="login-err" id="fb-msg"></div>
+    <div class="login-msg" id="fb-msg"></div>
     <p style="font-size:11px;color:var(--text-hint);margin-top:1rem;text-align:center">
-      Seus dados ficam salvos na nuvem (Firebase) e só você tem acesso.
+      Seus dados ficam salvos na nuvem e só você tem acesso.
     </p>
   </div>
 </div>
 
-<!-- APP SCREEN -->
+<!-- DASHBOARD -->
 <div id="app-screen" class="layout">
   <!-- Sidebar -->
   <aside class="sidebar">
@@ -332,9 +324,9 @@ window._fbLoad = fbLoad;
     <div class="nav-section">Análise</div>
     <div class="nav-item" onclick="goPage('rentabilidade')"><span class="nav-icon">📈</span> Rentabilidade</div>
     <div style="padding: 1rem 1.25rem 0.75rem; border-top: 1px solid var(--border-light); margin-top: auto;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-        <span id="sb-user-email" style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:130px"></span>
-        <button class="btn btn-sm" onclick="window._fbLogout()" title="Sair" style="padding:0 8px;font-size:11px">Sair</button>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:6px">
+        <span id="sb-user-email" style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+        <button class="btn btn-sm" onclick="window._fbLogout()" style="padding:0 8px;font-size:11px;flex-shrink:0">Sair</button>
       </div>
       <div style="font-size:10px;font-weight:600;color:var(--text-hint);letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px">Dados</div>
       <div style="display:flex;gap:6px;margin-bottom:12px">
@@ -573,17 +565,15 @@ let ops = [], divs = [], precos = {};
 let charts = {};
 
 function save() {
-  // mirror to window for Firebase module to access
   window._ops    = ops;
   window._divs   = divs;
   window._precos = precos;
   if (window._fbSave) window._fbSave();
 }
 function load() {
-  // called once at init from Firebase; see _syncFromFirebase
+  // data loaded via Firebase — see _syncFromFirebase
 }
 
-// Called by Firebase module after loading data
 window._syncFromFirebase = function() {
   ops    = window._ops    || [];
   divs   = window._divs   || [];
@@ -591,7 +581,6 @@ window._syncFromFirebase = function() {
   refreshAll();
 };
 
-// Called by Firebase module after auth is ready
 window._initDashboard = function() {
   document.getElementById('op-data').value  = today();
   document.getElementById('div-data').value = today();
@@ -599,8 +588,10 @@ window._initDashboard = function() {
     new Date().toLocaleDateString('pt-BR',{day:'2-digit',month:'short',year:'numeric'});
   const savedToken = localStorage.getItem('brapi_token');
   if (savedToken) document.getElementById('brapi-token').value = savedToken;
-  // data will arrive via _syncFromFirebase after fbLoad completes
-};
+}; catch(e){ ops=[]; }
+  try { divs   = JSON.parse(localStorage.getItem('inv_divs')  ||'[]');  } catch(e){ divs=[]; }
+  try { precos = JSON.parse(localStorage.getItem('inv_precos')||'{}'); } catch(e){ precos={}; }
+}
 
 function getPosicoes() {
   const pos = {};
@@ -1224,8 +1215,9 @@ function refreshAll() {
   buildRentabilidade();
 }
 
-// Init runs via window._initDashboard() called from Firebase onAuthStateChanged
+// Init — data loaded via Firebase onAuthStateChanged → _initDashboard → _syncFromFirebase
 </script>
+
 </div><!-- /app-screen -->
 </body>
 </html>
